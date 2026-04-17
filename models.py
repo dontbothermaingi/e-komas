@@ -148,3 +148,99 @@ class Address(db.Model):
             "postal_code": self.postal_code,
             "country": self.country
         }
+
+class TokenBlocklist(db.Model):
+    __tablename__ = 'token_blocklist'
+
+    id = db.Column(db.Integer, primary_key=True)
+    jti = db.Column(db.String(36), nullable=False, index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=db.func.current_timestamp())
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "jti": self.jti,
+            "created_at": self.created_at.isoformat() if self.created_at else None
+        }
+
+
+# The association table for the many-to-many relationship
+product_categories = db.Table('product_categories',
+    db.Column('category_id', db.String(36), db.ForeignKey('categories.id'), primary_key=True),
+    db.Column('product_id', db.String(36), db.ForeignKey('products.id'), primary_key=True)
+)
+
+class Category(db.Model):
+    __tablename__ = 'categories'
+
+    id = db.Column(db.String(36), primary_key=True, nullable=False, unique=True, default=lambda: str(uuid.uuid4()))
+    name = db.Column(db.String(100), nullable=False)
+    slug = db.Column(db.String(100), unique=True, nullable=False, index=True)
+
+    # The relationship to link back to the Product model
+    products = db.relationship('Product', secondary=product_categories, lazy='subquery',
+        backref=db.backref('categories', lazy=True))
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "slug": self.slug
+        }
+
+class Cart(db.Model):
+    __tablename__ = 'carts'
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = db.Column(db.String(36), db.ForeignKey('users.id'), unique=True, nullable=False) # One cart per user
+    updated_at = db.Column(db.DateTime, default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
+
+    items = db.relationship('CartItem', backref='cart', lazy='joined', cascade="all, delete-orphan")
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "items": [item.to_dict() for item in self.items],
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None
+        }
+
+class CartItem(db.Model):
+    __tablename__ = 'cart_items'
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    cart_id = db.Column(db.String(36), db.ForeignKey('carts.id'), nullable=False)
+    product_id = db.Column(db.String(36), db.ForeignKey('products.id'), nullable=False)
+    quantity = db.Column(db.Integer, nullable=False, default=1)
+
+    # We do NOT store price here. Price is always fetched fresh from the Product table to prevent staleness.
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "product_id": self.product_id,
+            "quantity": self.quantity
+        }
+
+class Booking(db.Model):
+    __tablename__ = 'bookings'
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    order_item_id = db.Column(db.String(36), db.ForeignKey('order_items.id'), nullable=False)
+    start_time = db.Column(db.DateTime, nullable=False)
+    end_time = db.Column(db.DateTime, nullable=False)
+    
+    # Status allows an admin to cancel or reschedule a specific booking 
+    # without cancelling the entire financial order.
+    status = db.Column(db.String(50), default='confirmed') 
+
+    order_item = db.relationship('OrderItem', backref=db.backref('booking', uselist=False))
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "order_item_id": self.order_item_id,
+            "start_time": self.start_time.isoformat() if self.start_time else None,
+            "end_time": self.end_time.isoformat() if self.end_time else None,
+            "status": self.status
+        }
