@@ -28,7 +28,7 @@ class OrderEnum(enum.Enum):
 class User(db.Model):
     __tablename__ = 'users'
 
-    id = db.Column(db.Integer, primary_key = True, nullable=False)
+    id = db.Column(db.String(36), primary_key=True, nullable=False, unique=True, default=lambda: str(uuid.uuid4()))
     first_name = db.Column(db.String(100), nullable=False)
     last_name = db.Column(db.String(100), nullable=False)
     email = db.Column(db.String(120), index=True, nullable=False, unique = True)
@@ -49,8 +49,8 @@ class User(db.Model):
             "first_name": self.first_name,
             "last_name": self.last_name,
             "email": self.email,
-            "role": self.role,
-            "created_at":self.created_at
+            "role": self.role.value if self.role else None,
+            "created_at":self.created_at.isoformat() if self.created_at else None
         }
 
 class Product(db.Model):
@@ -60,9 +60,9 @@ class Product(db.Model):
     id = db.Column(db.String(36), primary_key = True, nullable=False, unique=True, default = lambda: str(uuid.uuid4()))
     sku = db.Column(db.String(100), nullable=False, index=True)
     title = db.Column(db.String(255), nullable=False)
-    base_price = db.Column(db.NUmeric(15,2), nullable=False, default=0.0)
+    base_price = db.Column(db.Numeric(15,2), nullable=False, default=0.0)
     type = db.Column(db.Enum(ProductEnum), default=ProductEnum.PHYSICAL)
-    attributes = db.Column(db.JSON)
+    attributes = db.Column(db.JSONB)
     is_active = db.Column(db.Boolean, nullable=False, default = True)
 
     def to_dict(self):
@@ -70,8 +70,9 @@ class Product(db.Model):
             "id": self.id,
             "sku": self.sku,
             "title": self.title,
-            "base_price": self.base_price,
-            "type": self.type,
+            "base_price": float(self.base_price),
+            "type": self.type.value if self.type else None,
+            "attributes": self.attributes,
             "is_active": self.is_active,
         }
 
@@ -79,24 +80,27 @@ class Order(db.Model):
     __tablename__ = "orders"
 
     id = db.Column(db.String(36), primary_key = True, nullable=False, unique=True, default = lambda: str(uuid.uuid4()))
-    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    user_id = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=True)
     guest_email = db.Column(db.String(50), nullable = True)
     total_amount = db.Column(db.Numeric(15, 2), default = 0.0)
     status = db.Column(db.Enum(OrderEnum), default = OrderEnum.PENDING)
-    payment_refrence = db.Column(db.String(50), nullable=True)
+    payment_reference = db.Column(db.String(50), nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default = db.func.current_timestamp())
 
     user = db.relationship('User', backref='user', lazy=True)
 
     def to_dict(self):
+
+        customer_name = f"{self.user.first_name} {self.user.last_name}" if self.user else "Guest"
+
         return{
             "id": self.id,
-            "name": self.user.first_name + self.user.last_name,
+            "name": customer_name,
             "guest_email": self.guest_email,
-            "total_amount": self.total_amount,
-            "status": self.status,
-            "payment_reference": self.payment_refrence,
-            "created_at": self.created_at
+            "total_amount": float(self.total_amount),
+            "status": self.status.value if self.status else None,
+            "payment_reference": self.payment_reference,
+            "created_at": self.created_at.isoformat() if self.created_at else None
         }
 
 class OrderItem(db.Model):
@@ -116,10 +120,10 @@ class OrderItem(db.Model):
             "order_id": self.order_id,
             "product_id": self.product_id,
             "quantity": self.quantity,
-            "price_at_purchase": self.price_at_purchase,
-            "product_name": self.product.title,
-            "product_sku": self.product.sku,
-            "product_type": self.product.type
+            "price_at_purchase": float(self.price_at_purchase),
+            "product_name": self.product.title if self.product else None,
+            "product_sku": self.product.sku if self.product else None,
+            "product_type": self.product.type.value if self.product and self.product.type else None
         }
 
 class Address(db.Model):
@@ -132,7 +136,7 @@ class Address(db.Model):
     street = db.Column(db.String(255))
     city = db.Column(db.String(120))
     postal_code = db.Column(db.String(120))
-    country = db.Column(db.Strings(120))
+    country = db.Column(db.String(120))
 
     def to_dict(self):
         return{
@@ -144,10 +148,3 @@ class Address(db.Model):
             "postal_code": self.postal_code,
             "country": self.country
         }
-
-
-
-    
-
-
-
