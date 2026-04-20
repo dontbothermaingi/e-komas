@@ -2,6 +2,7 @@ from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime, timezone
 import enum
 from werkzeug.security import generate_password_hash, check_password_hash
+from sqlalchemy.dialects.postgresql import JSONB
 import uuid
 
 db = SQLAlchemy()
@@ -62,7 +63,7 @@ class Product(db.Model):
     title = db.Column(db.String(255), nullable=False)
     base_price = db.Column(db.Numeric(15,2), nullable=False, default=0.0)
     type = db.Column(db.Enum(ProductEnum), default=ProductEnum.PHYSICAL)
-    attributes = db.Column(db.JSONB)
+    attributes = db.Column(JSONB)
     is_active = db.Column(db.Boolean, nullable=False, default = True)
 
     def to_dict(self):

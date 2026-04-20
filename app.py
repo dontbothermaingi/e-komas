@@ -1,17 +1,17 @@
 from models import db, User, TokenBlocklist, Cart, CartItem, Order, OrderItem, OrderEnum, Product, Booking, UserRoleEnum, ProductEnum
-from flask import Flask
+from flask import Flask, request
 from datetime import timedelta, datetime
 from flask_restful import Api, reqparse, Resource
 from flask_jwt_extended import JWTManager, create_access_token, get_jwt, get_jwt_identity, jwt_required
+from mpesa_utils import get_mpesa_access_token, generate_mpesa_password, STK_PUSH_URL, SHORTCODE
 import requests
-import base64
 import os
 
 app = Flask(__name__)
 
 # App Configuration
 app.config['SECRET_KEY'] = 'your-super-secret-key-app'
-app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://username:password@localhost/ecommerce_db'
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # JWT Configuration
@@ -380,6 +380,134 @@ class CheckoutResource(Resource):
 api.add_resource(CheckoutResource, '/api/checkout')
 
 
+class MpesaPayResource(Resource):
+    @jwt_required(optional=True)
+    def post(self, order_id):
+        # 1. Validate the Order
+        order = Order.query.get(order_id)
+        if not order or order.status != OrderEnum.PENDING:
+            return {"message": "Invalid order or order already processed"}, 400
+
+        data = request.get_json()
+        phone_number = data.get('phone_number') # Expected format: 2547XXXXXXXX
+        
+        if not phone_number:
+            return {"message": "Phone number is required"}, 400
+
+        # 2. Get Access Token and Generate Password
+        access_token = get_mpesa_access_token()
+        if not access_token:
+            return {"message": "Failed to connect to payment gateway"}, 500
+
+        password, timestamp = generate_mpesa_password()
+
+        # 3. Construct the STK Push Payload
+        # Note: CallBackURL MUST be a public HTTPS URL. Safaricom cannot reach 'localhost'
+        headers = {"Authorization": f"Bearer {access_token}"}
+        payload = {
+            "BusinessShortCode": SHORTCODE,
+            "Password": password,
+            "Timestamp": timestamp,
+            "TransactionType": "CustomerPayBillOnline", # Or CustomerBuyGoodsOnline
+            "Amount": int(order.total_amount), # M-Pesa requires integers
+            "PartyA": phone_number,
+            "PartyB": SHORTCODE,
+            "PhoneNumber": phone_number,
+            "CallBackURL": f"{os.environ.get('BASE_URL')}/api/webhooks/mpesa",
+            "AccountReference": str(order.id)[:12], # Keep it short for the USSD prompt
+            "TransactionDesc": "Store Purchase" 
+        }
+
+        # 4. Fire the Request
+        try:
+            response = requests.post(STK_PUSH_URL, json=payload, headers=headers, timeout=15)
+            response.raise_for_status()
+            
+            # Save the CheckoutRequestID to match the callback later
+            response_data = response.json()
+            order.payment_reference = response_data.get('CheckoutRequestID')
+            db.session.commit()
+            
+            return {"message": "STK Push sent to phone. Awaiting PIN."}, 200
+            
+        except requests.exceptions.RequestException as e:
+            return {"message": "Payment initiation failed", "error": str(e)}, 500
+
+api.add_resource(MpesaPayResource, '/api/checkout/<string:order_id>/pay')
+
+class MpesaWebhookResource(Resource):
+    # CRITICAL: This route cannot have @jwt_required() because Safaricom is hitting it, not a user.
+    def post(self):
+        data = request.get_json()
+        
+        # Safaricom wraps the payload in a 'Body' -> 'stkCallback' structure
+        callback_data = data.get('Body', {}).get('stkCallback', {})
+        checkout_request_id = callback_data.get('CheckoutRequestID')
+        result_code = callback_data.get('ResultCode')
+
+        # Find the pending order associated with this request
+        order = Order.query.filter_by(payment_reference=checkout_request_id).first()
+        
+        if not order:
+            return {"message": "Order not found"}, 404
+
+        if result_code == 0:
+            # ResultCode 0 means SUCCESS. 
+            # We transition the state machine from PENDING to PAID.
+            order.status = OrderEnum.PAID
+            
+            # Optional: Extract the actual M-Pesa receipt number from the CallbackMetadata
+            # metadata = callback_data.get('CallbackMetadata', {}).get('Item', [])
+            # for item in metadata:
+            #     if item.get('Name') == 'MpesaReceiptNumber':
+            #         order.payment_reference = item.get('Value')
+                    
+            db.session.commit()
+            
+            # Here you would trigger email confirmations or update your Logistics trackers
+        else:
+            # Payment failed, cancelled by user, or insufficient funds
+            order.status = OrderEnum.CANCELLED
+            db.session.commit()
+
+        # Always return a 200 OK to Safaricom so they stop retrying the webhook
+        return {"ResultCode": 0, "ResultDesc": "Accepted"}, 200
+
+# Add to your API routes
+api.add_resource(MpesaWebhookResource, '/api/webhooks/mpesa')
+
+class TestSTKResource(Resource):
+    def post(self):
+        data = request.get_json()
+        # Format must be 2547XXXXXXXX
+        phone_number = data.get('phone_number') 
+
+        access_token = get_mpesa_access_token()
+        password, timestamp = generate_mpesa_password()
+
+        headers = {"Authorization": f"Bearer {access_token}"}
+        payload = {
+            "BusinessShortCode": SHORTCODE,
+            "Password": password,
+            "Timestamp": timestamp,
+            "TransactionType": "CustomerPayBillOnline",
+            "Amount": 1, # Testing with 1 Ksh
+            "PartyA": phone_number,
+            "PartyB": SHORTCODE,
+            "PhoneNumber": phone_number,
+            "CallBackURL": f"{os.environ.get('BASE_URL')}/api/webhooks/mpesa",
+            "AccountReference": "TestPay",
+            "TransactionDesc": "Testing API" 
+        }
+
+        try:
+            response = requests.post(STK_PUSH_URL, json=payload, headers=headers)
+            return response.json(), response.status_code
+        except Exception as e:
+            return {"error": str(e)}, 500
+
+# Add this temporarily to your routes
+api.add_resource(TestSTKResource, '/api/test-stk')
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)

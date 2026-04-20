@@ -2,6 +2,9 @@ import requests
 import base64
 from datetime import datetime
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # These should be loaded from your Render Environment Variables
 CONSUMER_KEY = os.environ.get('MPESA_CONSUMER_KEY')
