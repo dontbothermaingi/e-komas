@@ -6,6 +6,7 @@ from flask_jwt_extended import JWTManager, create_access_token, get_jwt, get_jwt
 from mpesa_utils import get_mpesa_access_token, generate_mpesa_password, STK_PUSH_URL, SHORTCODE
 import requests
 import os
+from flask_migrate import Migrate
 
 app = Flask(__name__)
 
@@ -21,7 +22,7 @@ app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=1)
 db.init_app(app)
 api = Api(app)
 jwt = JWTManager(app)
-
+migrate = Migrate(app, db)
 # This function runs automatically @jwt_required route is hit
 # It checks whether the token is in the bloacklist
 @jwt.token_in_blocklist_loader
