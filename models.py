@@ -55,7 +55,6 @@ class User(db.Model):
         }
 
 class Product(db.Model):
-
     __tablename__ = 'products'
 
     id = db.Column(db.String(36), primary_key = True, nullable=False, unique=True, default = lambda: str(uuid.uuid4()))
@@ -64,6 +63,11 @@ class Product(db.Model):
     base_price = db.Column(db.Numeric(15,2), nullable=False, default=0.0)
     type = db.Column(db.Enum(ProductEnum), default=ProductEnum.PHYSICAL)
     attributes = db.Column(JSONB)
+    description = db.Column(db.Text, nullable=True)
+    
+    # Store an array of Cloudinary URLs
+    images = db.Column(JSONB, default=lambda: []) 
+    
     is_active = db.Column(db.Boolean, nullable=False, default = True)
 
     def to_dict(self):
@@ -74,7 +78,9 @@ class Product(db.Model):
             "base_price": float(self.base_price),
             "type": self.type.value if self.type else None,
             "attributes": self.attributes,
+            "images": self.images or [], # Ensure it always returns a list
             "is_active": self.is_active,
+            "description": self.description,
         }
 
 class Order(db.Model):

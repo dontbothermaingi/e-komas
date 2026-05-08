@@ -7,6 +7,7 @@ from mpesa_utils import get_mpesa_access_token, generate_mpesa_password, STK_PUS
 import requests
 import os
 from flask_migrate import Migrate
+from flask_cors import CORS
 
 app = Flask(__name__)
 
@@ -17,12 +18,19 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # JWT Configuration
 app.config['JWT_SECRET_KEY'] = 'your-super-secret-jwt-key'
-app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=1)
+app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=12)
 
 db.init_app(app)
 api = Api(app)
 jwt = JWTManager(app)
 migrate = Migrate(app, db)
+
+CORS(app, 
+     resources={r"/*": {"origins": "*"}}, 
+     supports_credentials=True, 
+     allow_headers=["Content-Type", "Authorization"],
+     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+
 # This function runs automatically @jwt_required route is hit
 # It checks whether the token is in the bloacklist
 @jwt.token_in_blocklist_loader
@@ -74,7 +82,7 @@ class UserRegister(Resource):
             db.session.rollback()
             return {"message": "An error occurred creating the user.", "error": str(e)}, 500
 
-api.add_resource(UserRegister, '/api/auth/register')
+api.add_resource(UserRegister, '/auth/register')
 
 class UserLogin(Resource):
     def post(self):
@@ -95,7 +103,7 @@ class UserLogin(Resource):
             "user": user.to_dict()
         }, 200
 
-api.add_resource(UserLogin, '/api/auth/login')
+api.add_resource(UserLogin, '/auth/login')
 
 class UserLogout(Resource):
     @jwt_required() # This decorator ensures only users with a valid token can log out
@@ -124,6 +132,8 @@ product_parser.add_argument('base_price', type=float, required=True, help="Base 
 product_parser.add_argument('type', type=str, required=True, help="Product type (physical, digital, service)")
 product_parser.add_argument('attributes', type=dict, required=False, default={})
 product_parser.add_argument('is_active', type=bool, required=False, default=True)
+product_parser.add_argument('images', type=str, action='append', location='json', default=[])
+product_parser.add_argument('description', type=str, required=False, default="")
 
 
 # Parser for query string pagination
@@ -137,7 +147,6 @@ class ProductListResource(Resource):
         page = args['page']
         per_page = args['per_page']
 
-        # Database-level pagination. error_out=False prevents crashing if a user asks for page 999
         paginated_products = Product.query.filter_by(is_active=True).paginate(
             page=page, per_page=per_page, error_out=False
         )
@@ -175,13 +184,16 @@ class ProductListResource(Resource):
         if Product.query.filter_by(sku=data['sku']).first():
             return {"message": f"A product with SKU '{data['sku']}' already exists"}, 400
 
+        # Create the new product instance
         new_product = Product(
             sku=data['sku'],
             title=data['title'],
             base_price=data['base_price'],
             type=product_type,
-            attributes=data['attributes'],
-            is_active=data['is_active']
+            attributes=data.get('attributes', {}),
+            images=data.get('images', []),
+            description=data.get('description', ""),
+            is_active=data.get('is_active', True)
         )
 
         try:
@@ -196,7 +208,7 @@ api.add_resource(ProductListResource, '/api/products')
 
 class ProductResource(Resource):
     def get(self, product_id):
-        product = Product.query.fliter_by(id=product_id).first()
+        product = db.session.get(Product, product_id)
 
         if not product or not product.is_active:
             return {"message": "Product not found"}, 404
@@ -228,6 +240,12 @@ class ProductResource(Resource):
         product.type = product_type
         product.attributes = data['attributes']
         product.is_active = data['is_active']
+
+        if 'description' in data:
+            product.description = data['description']
+            
+        if 'images' in data:
+            product.images = data['images']
 
         try:
             db.session.commit()
